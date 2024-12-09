@@ -60,9 +60,9 @@
       (= \$ cmd) [1 ($ state)] ;todo add quantifier
       (= \^ cmd) [1 (beg state)]  ;;todo add quantifier
       :else state))
-  ([state cmd]
+  ([state cmd] 
      (eval state cmd [1])))
-
+(take-while #(not= \a %) [\b \s \d \f \s \d \f \s ] )
 (defn process-commands [initial-state commands]
   (loop [state initial-state
          [hd & nxt :as cmds] commands
@@ -70,8 +70,25 @@
     (if hd 
       (cond 
         (Character/isWhitespace hd) (recur state nxt stack)
+        (= \q hd) (let [r (first nxt) #_ (must be a a-z ) 
+                        macro (take-while #(not= \q %) (next nxt))
+                        tokens-consumed (+ 3 (count macro)) ] 
+                  (recur (assoc-in state [:registers r] macro) (drop tokens-consumed cmds) stack)) 
+        (= \f hd) (let [ch (first nxt)
+                        cur-row (get-in state [:data (:pos-y state)])
+                        restofrow (range (inc (:pos-x state)) (count cur-row))
+                        skipped (take-while #(not= ch (cur-row %)) restofrow)   
+                        skipcount (count skipped)] 
+                      (if (not= skipcount (count restofrow))
+                       (recur (update state :pos-x #(+ (inc (count skipped))  %)) (rest nxt) stack)
+                       (recur state (rest nxt) stack)))
+           
+        (= \@ hd) (let [r (first nxt) 
+                        macro (get-in state [:registers r])] 
+                  (recur state (vec (concat macro (rest nxt))) stack))
         (<= 49 (int hd) 57) (let [digits (apply str (take-while #(Character/isDigit %) cmds)) ] 
-                              (recur state (drop (count digits) cmds) (conj stack (parse-long digits)))) 
+                              (recur state (drop (count digits) cmds) (conj stack (parse-long digits))))
+
         :else (if (empty? stack) 
                 (let [[popped state] (eval state hd)] 
                   (recur state nxt stack))
@@ -80,15 +97,28 @@
       state)))
 
 
+
+
+(defmacro registers []
+  (into {}  (map (juxt char (constantly nil)) (range (int \a)  (inc  (int \z)) ))))
+
+(def program
+"
+fz
+")
+
+(def buf 
+"abcdef
+fghij")
+
 ;; Example usage
-(let [state {:data [[\a \b \c \d \e]
-                    [\f \g \h \i \j]] 
+(let [state {:data  (vec (map vec (clojure.string/split-lines buf)))  
+             :registers (registers)
              :pos-x 0
              :pos-y 0
              :mode :normal }
-      final-state (process-commands state [\l \1 \0 \x])
-      _ (println final-state) ]
-    [(:data final-state) ] 
+      final-state (process-commands state program) #_ (println final-state) ]
+    final-state  
     
     )
 
