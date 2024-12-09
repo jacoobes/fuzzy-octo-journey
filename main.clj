@@ -35,7 +35,20 @@
 (defn get-cur-row [state] 
   (get (:data state) (:pos-y state)))
 
+(defn transform-range
+  [coll start end transform-fn]
+  (map-indexed
+    (fn [idx val]
+      (if (and (>= idx start) (< idx end))
+        (transform-fn val)
+        val))
+    coll))
 
+(defn toggle-case [ch]
+  (let [intch (int ch)] 
+    (if (Character/isAlphabetic (int ch) ) 
+      (char (bit-xor intch (bit-shift-left 1 5))) 
+      ch)))
 
 (defn eval ;returns [numofstackargsused newstate]
   ([state cmd stack]
@@ -54,6 +67,14 @@
                        updated-row (vec (concat (subvec cur-row 0 (second cur-pos)) 
                                                 (subvec cur-row (min (count cur-row) (+ quantifier (second cur-pos))))))] 
                    [1  (assoc-in state [:data (first cur-pos)] updated-row)])  
+      (= \~ cmd) (let [cur-pos [(:pos-y state) (:pos-x state)]  
+                       quantifier (peek stack) 
+                       cur-row (get (:data state) (first cur-pos))
+                       updated (vec (transform-range cur-row  (second cur-pos) (+ quantifier (second cur-pos)) toggle-case)) ] 
+                   [1  (-> (assoc-in state [:data (first cur-pos)] updated)
+                           (update :pos-x  (fn [i] (if (= i (dec (count cur-row))) 
+                                                       i 
+                                                       (inc i)))))])
                    
       #_(= \w cmd) #_[1 (move-word state stack)] 
       
@@ -62,7 +83,10 @@
       :else state))
   ([state cmd] 
      (eval state cmd [1])))
-(take-while #(not= \a %) [\b \s \d \f \s \d \f \s ] )
+
+
+
+
 (defn process-commands [initial-state commands]
   (loop [state initial-state
          [hd & nxt :as cmds] commands
@@ -74,6 +98,7 @@
                         macro (take-while #(not= \q %) (next nxt))
                         tokens-consumed (+ 3 (count macro)) ] 
                   (recur (assoc-in state [:registers r] macro) (drop tokens-consumed cmds) stack)) 
+
         (= \f hd) (let [ch (first nxt)
                         cur-row (get-in state [:data (:pos-y state)])
                         restofrow (range (inc (:pos-x state)) (count cur-row))
@@ -84,9 +109,11 @@
                        (recur state (rest nxt) stack)))
            
         (= \@ hd) (let [r (first nxt) 
-                        macro (get-in state [:registers r])] 
-                  (recur state (vec (concat macro (rest nxt))) stack))
-        (<= 49 (int hd) 57) (let [digits (apply str (take-while #(Character/isDigit %) cmds)) ] 
+                        quantifier (peek stack)
+                        macro (apply concat (repeat (or quantifier 1) (get-in state [:registers r]))) ] 
+                  (recur state (vec (concat macro (rest nxt))) (if quantifier (pop stack) stack) ))
+
+        (<= 49 (int hd) 57) (let [digits (apply str (take-while Character/isDigit cmds)) ] 
                               (recur state (drop (count digits) cmds) (conj stack (parse-long digits))))
 
         :else (if (empty? stack) 
@@ -97,18 +124,17 @@
       state)))
 
 
-
-
 (defmacro registers []
   (into {}  (map (juxt char (constantly nil)) (range (int \a)  (inc  (int \z)) ))))
 
-(def program
-"
-fz
+(def macros 
+"qa 4l q
+2@a 
 ")
-
+(def program 
+  "~~~~~")
 (def buf 
-"abcdef
+"AbCdEf
 fghij")
 
 ;; Example usage
