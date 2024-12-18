@@ -51,30 +51,29 @@
       ch)))
 
 (defn eval ;returns [numofstackargsused newstate]
-  ([state cmd stack]
+  ([{ :keys [pos-x pos-y] :as state} cmd stack]
      (cond 
       (= \h cmd) [1 (move-left state (peek stack))] 
       (= \l cmd) [1 (move-right state (peek stack))]
       (= \k cmd) [1 (move-up state (peek stack))] 
       (= \j cmd) [1 (move-down state (peek stack))] 
-      (= \D cmd) (let [cur-pos (:pos-y state) ;todo add quantifier 
-                       updated-row (vec (take (dec (state :pos-x)) (get-in state [:data cur-pos])))] 
+      (= \D cmd) (let [updated-row (vec (take (dec pos-x) (get-in state [:data pos-y])))] 
                    [1  (-> (update state :pos-x dec)   
-                        (assoc-in [:data cur-pos] updated-row))])
-      (= \x cmd) (let [cur-pos [(:pos-y state) (:pos-x state)]  
-                       quantifier (peek stack) 
-                       cur-row (get (:data state) (first cur-pos))
-                       updated-row (vec (concat (subvec cur-row 0 (second cur-pos)) 
-                                                (subvec cur-row (min (count cur-row) (+ quantifier (second cur-pos))))))] 
-                   [1  (assoc-in state [:data (first cur-pos)] updated-row)])  
-      (= \~ cmd) (let [cur-pos [(:pos-y state) (:pos-x state)]  
-                       quantifier (peek stack) 
-                       cur-row (get (:data state) (first cur-pos))
-                       updated (vec (transform-range cur-row  (second cur-pos) (+ quantifier (second cur-pos)) toggle-case)) ] 
-                   [1  (-> (assoc-in state [:data (first cur-pos)] updated)
+                        (assoc-in [:data pos-y] updated-row))])
+      (= \x cmd) (let [quantifier (peek stack) 
+                       cur-row (get (:data state) pos-y)
+                       updated-row (vec (concat (subvec cur-row 0 pos-x) 
+                                                (subvec cur-row (min (count cur-row) (+ quantifier pos-x)))))] 
+                   [1  (assoc-in state [:data pos-y] updated-row)])  
+      (= \~ cmd) (let [quantifier (peek stack) 
+                        #_ (println pos-x)
+                       cur-row (get (:data state) pos-y)
+                       updated (vec (transform-range cur-row  pos-x (+ quantifier pos-x) toggle-case)) ] 
+                   [1  (-> (assoc-in state [:data pos-y] updated)
                            (update :pos-x  (fn [i] (if (= i (dec (count cur-row))) 
                                                        i 
                                                        (inc i)))))])
+      
                    
       #_(= \w cmd) #_[1 (move-word state stack)] 
       
@@ -88,7 +87,7 @@
 
 
 (defn process-commands [initial-state commands]
-  (loop [state initial-state
+  (loop [{:keys [pos-x pos-y]:as state} initial-state
          [hd & nxt :as cmds] commands
          stack []]
     (if hd 
@@ -97,21 +96,33 @@
         (= \q hd) (let [r (first nxt) #_ (must be a a-z ) 
                         macro (take-while #(not= \q %) (next nxt))
                         tokens-consumed (+ 3 (count macro)) ] 
-                  (recur (assoc-in state [:registers r] macro) (drop tokens-consumed cmds) stack)) 
+                    (if (empty? macro)
+                      (recur (assoc-in state [:registers r] nil) (drop tokens-consumed cmds) stack)
+                      (recur (assoc-in state [:registers r] macro) (drop tokens-consumed cmds) stack))) 
 
-        (= \f hd) (let [ch (first nxt)
-                        cur-row (get-in state [:data (:pos-y state)])
-                        restofrow (range (inc (:pos-x state)) (count cur-row))
-                        skipped (take-while #(not= ch (cur-row %)) restofrow)   
-                        skipcount (count skipped)] 
-                      (if (not= skipcount (count restofrow))
-                       (recur (update state :pos-x #(+ (inc (count skipped))  %)) (rest nxt) stack)
-                       (recur state (rest nxt) stack)))
-           
         (= \@ hd) (let [r (first nxt) 
                         quantifier (peek stack)
                         macro (apply concat (repeat (or quantifier 1) (get-in state [:registers r]))) ] 
-                  (recur state (vec (concat macro (rest nxt))) (if quantifier (pop stack) stack) ))
+                    (if (:error state)
+                        (recur (assoc state :error nil) (vec (rest nxt)) (if quantifier (pop stack) stack))
+                        (recur state (vec (concat macro (rest nxt))) (if quantifier (pop stack) stack) )))
+
+        (= \f hd) (let [counth (or (peek stack) 1) 
+                        ch (first nxt)
+                        cur-row (get (:data state) pos-y)
+                        [counth updated-posx] (reduce (fn [[counth new-pos] cur]
+                                                (if (zero? counth)
+                                                    (reduced [counth new-pos]) 
+                                                    (if (= ch (get cur-row cur))
+                                                        [(dec counth) cur] 
+                                                        [counth pos-x]))) 
+                                            [counth pos-x] (range (inc pos-x) (count cur-row))) ] 
+
+                  (recur (-> (assoc state :pos-x updated-posx)
+                             (update :errors  (fn [prev]  
+                                (if (= updated-posx pos-x) "f found nothing" prev )))) 
+                         (vec  (rest nxt))
+                         (if (peek stack) (pop stack) stack) ))
 
         (<= 49 (int hd) 57) (let [digits (apply str (take-while Character/isDigit cmds)) ] 
                               (recur state (drop (count digits) cmds) (conj stack (parse-long digits))))
@@ -127,21 +138,31 @@
 (defmacro registers []
   (into {}  (map (juxt char (constantly nil)) (range (int \a)  (inc  (int \z)) ))))
 
+
+
+
 (def macros 
-"qa 4l q
-2@a 
+"qa fAj~ @a  q 
+
+@a
 ")
+
 (def program 
-  "~~~~~")
+  "qa fA~j^   q 
+   @a ")
 (def buf 
-"AbCdEf
-fghij")
+"AAA
+AAA
+AAA
+
+")
 
 ;; Example usage
-(let [state {:data  (vec (map vec (clojure.string/split-lines buf)))  
+(let [state {:data  (mapv vec (clojure.string/split buf #"\r?\n" -1))  
              :registers (registers)
              :pos-x 0
              :pos-y 0
+             :error nil
              :mode :normal }
       final-state (process-commands state program) #_ (println final-state) ]
     final-state  
